@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顔エフェクトカメラ 🐸</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d14;
+    color: #fff;
+    font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  header {
+    padding: 16px 24px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header h1 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: #e8f5e9;
+  }
+  header .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #69f0ae;
+    box-shadow: 0 0 8px #69f0ae;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .camera-wrap {
+    position: relative;
+    width: min(480px, 100vw);
+    aspect-ratio: 3/4;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #111;
+    box-shadow: 0 0 60px rgba(105,240,174,0.15);
+  }
+
+  #video {
+    position: absolute;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+
+  #canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  .status-overlay {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: rgba(255,255,255,0.7);
+    font-size: 0.9rem;
+    pointer-events: none;
+  }
+  .status-overlay .icon { font-size: 2.5rem; margin-bottom: 8px; }
+
+  /* Effect selector */
+  .effects-panel {
+    width: min(480px, 100vw);
+    padding: 16px 12px;
+  }
+  .effects-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .effects-grid {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .effects-grid::-webkit-scrollbar { display: none; }
+
+  .effect-btn {
+    flex-shrink: 0;
+    width: 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: #888;
+    transition: all 0.2s;
+  }
+  .effect-btn .icon-wrap {
+    width: 56px; height: 56px;
+    border-radius: 16px;
+    background: #1a1a24;
+    border: 2px solid #2a2a38;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem;
+    transition: all 0.2s;
+  }
+  .effect-btn:hover .icon-wrap {
+    border-color: #69f0ae;
+    background: #0f2218;
+  }
+  .effect-btn.active .icon-wrap {
+    border-color: #69f0ae;
+    background: #0a2016;
+    box-shadow: 0 0 16px rgba(105,240,174,0.3);
+  }
+  .effect-btn.active { color: #e8f5e9; }
+  .effect-btn span { font-size: 0.65rem; }
+
+  /* Capture button */
+  .capture-area {
+    padding: 16px;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    align-items: center;
+  }
+  .capture-btn {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    border: 3px solid #fff;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.1s;
+  }
+  .capture-btn::after {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    background: #fff;
+    transition: all 0.1s;
+  }
+  .capture-btn:active { transform: scale(0.92); }
+  .capture-btn:active::after { background: #ccc; }
+
+  .flash {
+    position: absolute;
+    inset: 0;
+    background: white;
+    opacity: 0;
+    pointer-events: none;
+    border-radius: 20px;
+    z-index: 10;
+  }
+  .flash.on { animation: flash 0.3s ease-out; }
+  @keyframes flash {
+    0% { opacity: 0.9; }
+    100% { opacity: 0; }
+  }
+
+  #savedCanvas {
+    display: none;
+    width: min(480px, 100vw);
+    border-radius: 12px;
+    margin: 0 12px 16px;
+  }
+  .save-hint {
+    font-size: 0.75rem;
+    color: #69f0ae;
+    text-align: center;
+    padding-bottom: 16px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dot"></div>
+  <h1>顔エフェクトカメラ</h1>
+</header>
+
+<div class="camera-wrap" id="cameraWrap">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div class="flash" id="flash"></div>
+  <div class="status-overlay" id="statusOverlay">
+    <div class="icon">📷</div>
+    <div id="statusText">カメラを起動中...</div>
+  </div>
+</div>
+
+<div class="effects-panel">
+  <div class="effects-label">エフェクト</div>
+  <div class="effects-grid" id="effectsGrid"></div>
+</div>
+
+<div class="capture-area">
+  <button class="capture-btn" id="captureBtn" title="撮影"></button>
+</div>
+
+<canvas id="savedCanvas"></canvas>
+<div class="save-hint" id="saveHint">📥 長押しで画像を保存できます</div>
+
+<script type="module">
+// ---- Effect definitions (drawn on canvas) ----
+const EFFECTS = [
+  { id: 'none',    emoji: '🚫', label: 'なし',    draw: null },
+  { id: 'frog',    emoji: '🐸', label: 'カエル',  draw: drawFrog },
+  { id: 'bear',    emoji: '🐻', label: 'クマ',    draw: drawBear },
+  { id: 'carrot',  emoji: '🥕', label: 'ニンジン', draw: drawCarrot },
+  { id: 'bunny',   emoji: '🐰', label: 'ウサギ',  draw: drawBunny },
+  { id: 'devil',   emoji: '😈', label: '悪魔',    draw: drawDevil },
+  { id: 'flower',  emoji: '🌸', label: 'フラワー', draw: drawFlower },
+  { id: 'crown',   emoji: '👑', label: '王冠',    draw: drawCrown },
+];
+
+let currentEffect = EFFECTS[1]; // default: frog
+let faceData = null;
+let lastDetectionTime = 0;
+let animFrame = null;
+
+// ---- Build effect buttons ----
+const grid = document.getElementById('effectsGrid');
+EFFECTS.forEach(eff => {
+  const btn = document.createElement('button');
+  btn.className = 'effect-btn' + (eff.id === currentEffect.id ? ' active' : '');
+  btn.dataset.id = eff.id;
+  btn.innerHTML = `<div class="icon-wrap">${eff.emoji}</div><span>${eff.label}</span>`;
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.effect-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentEffect = eff;
+  });
+  grid.appendChild(btn);
+});
+
+// ---- Camera setup ----
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusOverlay = document.getElementById('statusOverlay');
+const statusText = document.getElementById('statusText');
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 854 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      statusOverlay.style.display = 'none';
+      resizeCanvas();
+      loadFaceDetection();
+    };
+  } catch(e) {
+    statusText.textContent = 'カメラへのアクセスを許可してください';
+  }
+}
+
+function resizeCanvas() {
+  const wrap = document.getElementById('cameraWrap');
+  canvas.width = wrap.offsetWidth;
+  canvas.height = wrap.offsetHeight;
+}
+
+// ---- Face detection via face-api.js ----
+let faceapi = null;
+async function loadFaceDetection() {
+  try {
+    // Load face-api.js from CDN
+    await loadScript('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');
+    statusText.textContent = 'モデルを読み込み中...';
+    statusOverlay.style.display = 'flex';
+
+    const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+    ]);
+    statusOverlay.style.display = 'none';
+    detectLoop();
+  } catch(e) {
+    console.error(e);
+    statusText.textContent = 'モデル読み込みエラー。ネット接続を確認してください。';
+  }
+}
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => { faceapi = window.faceapi; res(); };
+    s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+async function detectLoop() {
+  const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 });
+  const detect = async () => {
+    if (video.readyState === 4) {
+      const result = await faceapi.detectSingleFace(video, options).withFaceLandmarks(true);
+      if (result) faceData = result;
+      else if (Date.now() - lastDetectionTime > 2000) faceData = null;
+      if (result) lastDetectionTime = Date.now();
+    }
+    drawFrame();
+    requestAnimationFrame(detect);
+  };
+  detect();
+}
+
+// ---- Drawing loop ----
+function drawFrame() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!faceData || !currentEffect.draw) return;
+
+  // face-api coords are in video space; map to canvas
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scaleX = w / vw;
+  const scaleY = h / vh;
+
+  // Mirror correction (video is mirrored via CSS)
+  const box = faceData.detection.box;
+  // Flip x because video is CSS-mirrored
+  const fx = (vw - box.x - box.width) * scaleX;
+  const fy = box.y * scaleY;
+  const fw = box.width * scaleX;
+  const fh = box.height * scaleY;
+
+  // Landmarks also need flipping
+  const lms = faceData.landmarks.positions.map(p => ({
+    x: (vw - p.x) * scaleX,
+    y: p.y * scaleY
+  }));
+
+  currentEffect.draw(ctx, fx, fy, fw, fh, lms);
+}
+
+// ---- Effect drawing functions ----
+
+function drawFrog(ctx, fx, fy, fw, fh, lms) {
+  // Headband base: horizontal bar across top of head
+  const headY = fy - fh * 0.05;
+  const cx = fx + fw / 2;
+
+  ctx.save();
+
+  // Band
+  const grad = ctx.createLinearGradient(fx, headY, fx, headY + fh * 0.08);
+  grad.addColorStop(0, '#7bc637');
+  grad.addColorStop(1, '#4a9020');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(fx - fw * 0.05, headY, fw * 1.1, fh * 0.08, 8);
+  ctx.fill();
+
+  // Frog eyes (left and right bumps)
+  const eyeY = headY - fh * 0.12;
+  const eyeSize = fw * 0.22;
+
+  [-0.28, 0.28].forEach(offset => {
+    const ex = cx + fw * offset;
+    // Outer circle
+    ctx.beginPath();
+    ctx.arc(ex, eyeY, eyeSize, 0, Math.PI * 2);
+    const eg = ctx.createRadialGradient(ex - eyeSize*0.2, eyeY - eyeSize*0.2, 1, ex, eyeY, eyeSize);
+    eg.addColorStop(0, '#8fd640');
+    eg.addColorStop(0.7, '#5aa020');
+    eg.addColorStop(1, '#3a7010');
+    ctx.fillStyle = eg;
+    ctx.fill();
+    ctx.strokeStyle = '#2a5010';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // White of eye
+    ctx.beginPath();
+    ctx.ellipse(ex, eyeY + eyeSize * 0.1, eyeSize * 0.65, eyeSize * 0.55, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    // Pupil
+    ctx.beginPath();
+    ctx.arc(ex + eyeSize * 0.08, eyeY + eyeSize * 0.1, eyeSize * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = '#111';
+    ctx.fill();
+
+    // Highlight
+    ctx.beginPath();
+    ctx.arc(ex + eyeSize * 0.16, eyeY + eyeSize * 0.0, eyeSize * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+function drawBear(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const earY = fy - fh * 0.1;
+  const earSize = fw * 0.22;
+
+  [-0.38, 0.38].forEach(offset => {
+    const ex = cx + fw * offset;
+    // Outer ear
+    ctx.beginPath();
+    ctx.arc(ex, earY, earSize, 0, Math.PI * 2);
+    ctx.fillStyle = '#6b3a2a';
+    ctx.fill();
+    // Inner ear
+    ctx.beginPath();
+    ctx.arc(ex, earY, earSize * 0.55, 0, Math.PI * 2);
+    ctx.fillStyle = '#c47050';
+    ctx.fill();
+  });
+}
+
+function drawCarrot(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const topY = fy - fh * 0.45;
+  const carrotW = fw * 0.18;
+  const carrotH = fh * 0.38;
+
+  [-0.3, 0, 0.3].forEach((offset, i) => {
+    const x = cx + fw * offset;
+    ctx.save();
+    ctx.translate(x, topY + (i === 1 ? -8 : 0));
+
+    // Carrot body
+    ctx.beginPath();
+    ctx.moveTo(-carrotW / 2, 0);
+    ctx.lineTo(carrotW / 2, 0);
+    ctx.lineTo(carrotW * 0.15, carrotH);
+    ctx.lineTo(-carrotW * 0.15, carrotH);
+    ctx.closePath();
+    const cg = ctx.createLinearGradient(-carrotW/2, 0, carrotW/2, 0);
+    cg.addColorStop(0, '#e8602a');
+    cg.addColorStop(0.5, '#f88b30');
+    cg.addColorStop(1, '#e8602a');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.strokeStyle = '#c04010';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Leaves
+    for (let j = -1; j <= 1; j++) {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.bezierCurveTo(
+        j * 20, -30,
+        j * 30 + 10, -50,
+        j * 15, -60
+      );
+      ctx.bezierCurveTo(j * 10, -50, j * 5, -30, 0, 0);
+      ctx.fillStyle = '#3a9020';
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+function drawBunny(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const earW = fw * 0.13;
+  const earH = fh * 0.5;
+  const earY = fy - fh * 0.1;
+
+  [-0.28, 0.28].forEach(offset => {
+    const ex = cx + fw * offset;
+    const tilt = offset > 0 ? 0.15 : -0.15;
+    ctx.save();
+    ctx.translate(ex, earY);
+    ctx.rotate(tilt);
+
+    // Outer ear
+    ctx.beginPath();
+    ctx.ellipse(0, -earH / 2, earW, earH / 2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#f0e0e8';
+    ctx.fill();
+    ctx.strokeStyle = '#c0a0b0';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Inner ear
+    ctx.beginPath();
+    ctx.ellipse(0, -earH / 2, earW * 0.5, earH * 0.38, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#f0a0b8';
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
+function drawDevil(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const hornY = fy - fh * 0.02;
+  const hornSize = fw * 0.22;
+
+  [-0.32, 0.32].forEach(offset => {
+    const hx = cx + fw * offset;
+    const dir = offset > 0 ? 1 : -1;
+    ctx.save();
+    ctx.translate(hx, hornY);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-hornSize * dir * 0.5, -hornSize * 0.6);
+    ctx.lineTo(hornSize * dir * 0.3, -hornSize * 1.4);
+    ctx.lineTo(hornSize * dir * 0.8, -hornSize * 0.5);
+    ctx.closePath();
+    const dg = ctx.createLinearGradient(0, 0, 0, -hornSize * 1.4);
+    dg.addColorStop(0, '#cc1010');
+    dg.addColorStop(1, '#ff3030');
+    ctx.fillStyle = dg;
+    ctx.fill();
+    ctx.strokeStyle = '#880000';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawFlower(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const baseY = fy - fh * 0.08;
+  const flSize = fw * 0.14;
+
+  const positions = [
+    { x: cx - fw * 0.38, y: baseY },
+    { x: cx - fw * 0.18, y: baseY - fh * 0.12 },
+    { x: cx + fw * 0.02, y: baseY - fh * 0.16 },
+    { x: cx + fw * 0.22, y: baseY - fh * 0.12 },
+    { x: cx + fw * 0.38, y: baseY },
+  ];
+
+  const colors = ['#ff88aa', '#ff5588', '#ffaa44', '#ff88aa', '#aa55ff'];
+
+  positions.forEach(({ x, y }, i) => {
+    ctx.save();
+    ctx.translate(x, y);
+    const petals = 5;
+    for (let p = 0; p < petals; p++) {
+      ctx.beginPath();
+      const angle = (p / petals) * Math.PI * 2;
+      ctx.ellipse(
+        Math.cos(angle) * flSize * 0.5,
+        Math.sin(angle) * flSize * 0.5,
+        flSize * 0.38, flSize * 0.25,
+        angle, 0, Math.PI * 2
+      );
+      ctx.fillStyle = colors[i];
+      ctx.globalAlpha = 0.85;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, flSize * 0.28, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffe060';
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawCrown(ctx, fx, fy, fw, fh, lms) {
+  const cx = fx + fw / 2;
+  const crownY = fy - fh * 0.06;
+  const crownW = fw * 1.0;
+  const crownH = fh * 0.32;
+  const lx = cx - crownW / 2;
+
+  ctx.save();
+  // Crown body
+  ctx.beginPath();
+  ctx.moveTo(lx, crownY);
+  // 5 points
+  const points = 5;
+  const segW = crownW / (points - 1);
+  ctx.lineTo(lx, crownY - crownH * 0.5);
+  for (let i = 0; i < points; i++) {
+    const px = lx + i * segW / 1;
+    if (i % 2 === 0) {
+      ctx.lineTo(px, crownY - crownH);
+    } else {
+      ctx.lineTo(px, crownY - crownH * 0.45);
+    }
+  }
+  ctx.lineTo(lx + crownW, crownY);
+  ctx.closePath();
+
+  const cg = ctx.createLinearGradient(lx, crownY - crownH, lx, crownY);
+  cg.addColorStop(0, '#ffe080');
+  cg.addColorStop(0.5, '#ffd030');
+  cg.addColorStop(1, '#cc9000');
+  ctx.fillStyle = cg;
+  ctx.fill();
+  ctx.strokeStyle = '#aa7000';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Gems
+  const gemColors = ['#e040fb', '#40c4ff', '#f44336', '#40c4ff', '#e040fb'];
+  for (let i = 0; i < points; i++) {
+    const gx = lx + i * segW / 1;
+    const gy = crownY - crownH * (i % 2 === 0 ? 0.9 : 0.35);
+    ctx.beginPath();
+    ctx.arc(gx, gy, crownH * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = gemColors[i];
+    ctx.fill();
+    ctx.strokeStyle = '#fff6';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ---- Capture ----
+document.getElementById('captureBtn').addEventListener('click', () => {
+  const flash = document.getElementById('flash');
+  flash.classList.remove('on');
+  void flash.offsetWidth;
+  flash.classList.add('on');
+
+  // Compose: video frame + effect
+  const out = document.getElementById('savedCanvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const octx = out.getContext('2d');
+
+  // Draw mirrored video
+  octx.save();
+  octx.translate(out.width, 0);
+  octx.scale(-1, 1);
+  octx.drawImage(video, 0, 0, out.width, out.height);
+  octx.restore();
+
+  // Draw effect layer
+  octx.drawImage(canvas, 0, 0);
+
+  out.style.display = 'block';
+  document.getElementById('saveHint').style.display = 'block';
+  out.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+// ---- Start ----
+startCamera();
+window.addEventListener('resize', resizeCanvas);
+</script>
+</body>
+</html>
